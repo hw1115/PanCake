@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover" />
+    <title>팬케이크 뒤집기</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/poly-decomp@0.3.0/build/decomp.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.1/nipplejs.min.js"></script>
+    <style>
+      :root{
+        --bg-0:#f7fbff; --bg-1:#eef5ff; --bg-2:rgba(10,22,40,.18);
+        --glass:rgba(255,255,255,.65); --stroke:rgba(15,23,42,.15);
+        --text:#0f172a; --muted:#334155; --accent:#e6b15a; --accent-strong:#c48a34;
+        --pan:#3a4250; --pan-edge:#1f2937; --handle:#8b5e3c; --handle-edge:#3b2a1a;
+        --success: #22c55e; --fail: #ef4444; --info: #3b82f6;
+      }
+      *{box-sizing:border-box}
+      html, body { height: 100%; margin: 0; color: var(--text); font-family: 'Noto Sans KR', system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+      body{
+        background: radial-gradient(1200px 800px at 70% 20%, rgba(255,255,255,.06), transparent 60%), radial-gradient(1200px 800px at 0% 100%, rgba(118,168,255,.06), transparent 60%), linear-gradient(120deg, var(--bg-0), var(--bg-1));
+        position:relative; overflow: hidden;
+      }
+      body::before{ content:""; position:fixed; inset:0; pointer-events:none; z-index:0; background: repeating-linear-gradient( to right, rgba(0,0,0,.04) 0 1px, transparent 1px 40px), repeating-linear-gradient( to bottom, rgba(0,0,0,.04) 0 1px, transparent 1px 40px); mix-blend-mode:multiply; opacity:.20; }
+      body::after{ content:""; position:fixed; inset:0; background: radial-gradient(80% 70% at 50% 50%, transparent 60%, var(--bg-2)); pointer-events:none; z-index:0; }
+      
+      #ui { position: fixed; left: 18px; top: 18px; padding: 14px 16px; background: var(--glass); border:1px solid var(--stroke); border-radius: 14px; backdrop-filter: blur(8px); z-index:5; box-shadow: 0 6px 24px rgba(0,0,0,.25); min-width: 280px; }
+      #ui h1 { margin: 0 0 6px; font-size: 18px; font-weight: 700; }
+      #ui p { margin: 6px 0; font-size: 13px; line-height: 1.55; color: var(--muted); }
+      #score { margin: 12px 0 0; font-size: 20px; font-weight: 700; color: var(--accent-strong); }
+      #legend { margin-top:8px; display:flex; gap:8px; flex-wrap:wrap }
+      .kbd{ padding:2px 6px; border-radius:8px; background:rgba(255,255,255,.65); border:1px solid rgba(15,23,42,.18); font-size:12px; color:var(--text); font-weight: 500; }
+      #footer { position: fixed; right: 14px; bottom: 10px; font-size: 12px; color: var(--muted); opacity: .9; z-index:5; }
+      canvas { outline: none; display: block; position:relative; z-index:1; }
+      
+      #rl-controls { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--stroke); }
+      #rl-controls button { padding: 5px 10px; border: 1px solid var(--stroke); background: rgba(255,255,255,.5); border-radius: 8px; font-family: inherit; cursor: pointer; font-weight: 500; }
+      #rl-controls button.active { background: var(--accent); color: white; border-color: var(--accent-strong); }
+      #status-panel { margin-top: 12px; font-size: 12px; }
+      #status-panel div { margin-bottom: 4px; }
+      #status-panel .status-label { font-weight: 500; display: inline-block; width: 90px; }
+      #status-panel .status-value.ok { color: var(--success); }
+      #status-panel .status-value.err { color: var(--fail); }
+      #status-panel .status-value.wait { color: var(--info); }
+      
+      .touch-controls-container { position: fixed; bottom: 0; left: 0; width: 100%; height: 35vh; display: none; pointer-events: none; z-index: 10; }
+      body.touch-enabled .touch-controls-container.active { display: block; }
+      #joystick-zone { position: absolute; bottom: 3vmin; left: 3vmin; width: 150px; height: 150px; pointer-events: auto; }
+      .action-buttons { position: absolute; bottom: calc(5vmin + 10px); right: 5vmin; display: grid; grid-template-areas: "rotate-left rotate-right" "toss toss"; gap: 15px; pointer-events: auto; }
+      .touch-btn { width: 10vmin; height: 10vmin; max-width: 65px; max-height: 65px; background: rgba(255, 255, 255, 0.35); border: 1px solid rgba(15, 23, 42, 0.15); border-radius: 50%; font-size: 5vmin; color: rgba(15, 23, 42, 0.6); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); transition: transform 0.1s ease, background-color 0.1s ease; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; display: flex; align-items: center; justify-content: center; }
+      .touch-btn:active { transform: scale(0.92); background: rgba(255, 255, 255, 0.55); }
+      #touch-rotate-left { grid-area: rotate-left; } #touch-rotate-right { grid-area: rotate-right; }
+      #touch-space { grid-area: toss; width: auto; height: 12vmin; max-height: 80px; border-radius: 30px; font-weight: 700; font-size: 3.5vmin; color: var(--text); padding: 0 20px; }
+      @media (max-height: 480px), (max-width: 768px) { #ui { padding: 8px 10px; } #ui h1 { font-size: 16px; } #ui p { display: none; } #score { font-size: 18px; margin-top: 8px;} #legend { display: none; } }
+    </style>
+  </head>
+  <body>
+    <div id="ui">
+      <h1>팬케이크 뒤집기 <span style="font-weight:400;">(RL)</span></h1>
+      <p>강화학습(RL) 팬케이크 뒤집기 게임입니다. 공중으로 띄워 뒤집으면 점수 획득</p>
+      <div id="score">점수: 0</div>
+      <div id="legend">
+        <span class="kbd">방향키</span> 이동 <span class="kbd">w/s</span> 회전 <span class="kbd">Space</span> 살짝 치기 <span class="kbd">R</span> 리셋 <span class="kbd">G</span> 중력
+      </div>
+      <div id="rl-controls">
+          <button id="mode-user">사용자</button>
+          <button id="mode-ai">인공지능</button>
+      </div>
+      <div id="status-panel">
+          <div><span class="status-label">게임 모드:</span><span id="game-mode-status" class="status-value"></span></div>
+          <div><span class="status-label">WebSocket:</span><span id="ws-status" class="status-value err">연결 끊김</span></div>
+          <div><span class="status-label">ONNX 모델:</span><span id="model-status" class="status-value wait">로딩 중...</span></div>
+      </div>
+    </div>
+
+    <div class="touch-controls-container">
+      <div id="joystick-zone"></div>
+      <div class="action-buttons">
+        <button class="touch-btn" id="touch-rotate-left">⟲</button>
+        <button class="touch-btn" id="touch-rotate-right">⟳</button>
+        <button class="touch-btn" id="touch-space">TOSS</button>
+      </div>
+    </div>
+
+    <script>
+      window.addEventListener('DOMContentLoaded', () => {
+        let gameMode = 'USER';
+        let ws, ortSession, isModelReady = false, latestAiAction = [0, 0, 0, 0], aiLoopInterval = null;
+        let isRoundOver = false;
+        let hasFlippedInAir = false;
+        let orientationAtLaunch = 1;
+
+        // 점수 변수를 스크립트 최상단에 선언합니다.
+        let score = 0;
+
+        const { Engine, Render, Runner, World, Bodies, Body, Constraint, Events, Vector, Composite } = Matter;
+        const engine = Engine.create();
+        
+        engine.positionIterations = 30;
+        engine.velocityIterations = 20;
+        engine.constraintIterations = 12;
+        engine.gravity.y = 1.2;
+
+        const W = window.innerWidth, H = window.innerHeight;
+        const render = Render.create({ element: document.body, engine, options: { width: W, height: H, wireframes: false, background: 'transparent' } });
+        Render.run(render);
+        const runner = Runner.create({ isFixed: true, delta: 1000 / 120 });
+        Runner.run(runner, engine);
+        
+        const baseWidth = 1280;
+        const scale = Math.min(1.0, W / baseWidth);
+        
+        const world = engine.world;
+        const thickness = 80 * scale;
+        const ground = Bodies.rectangle(W/2, H + thickness/2, W * 2, thickness, { isStatic: true, render: { fillStyle: '#0e1424' } });
+        const wallL  = Bodies.rectangle(-thickness/2, H/2, thickness, H * 2, { isStatic: true, render: { fillStyle: '#0e1424' } });
+        const wallR  = Bodies.rectangle(W + thickness/2, H/2, thickness, H * 2, { isStatic: true, render: { fillStyle: '#0e1424' } });
+        const ceil = Bodies.rectangle(W/2, -thickness/2, W*2, thickness, {isStatic: true, render: {fillStyle: '#0e1424'}});
+        World.add(world, [ground, wallL, wallR, ceil]);
+        
+        const panVertices = [ { x: -140, y: -26 }, { x: -120, y: -10 }, { x: -120, y: 10 }, { x: 120, y: 10 }, { x: 120, y: -10 }, { x: 140, y: -26 }, { x: 140, y: -50 }, { x: -140, y: -50 } ].map(v => ({x: v.x * scale, y: v.y * scale}));
+        const panBody = Bodies.fromVertices(W * 0.5, H * 0.65, [panVertices], { collisionFilter: { category: 0x0001, mask: 0x0002 }, render: { fillStyle: getComputedStyle(document.documentElement).getPropertyValue('--pan').trim(), strokeStyle: getComputedStyle(document.documentElement).getPropertyValue('--pan-edge').trim(), lineWidth: 1 } });
+        const handleLen = 140 * scale, handleThick = 18 * scale;
+        const panHandle = Bodies.rectangle(W * 0.5 - (130 * scale) - handleLen / 2, H * 0.65 - (4 * scale), handleLen, handleThick, { chamfer: { radius: 9 * scale }, isSensor: true, collisionFilter: { category: 0, mask: 0 }, render: { fillStyle: getComputedStyle(document.documentElement).getPropertyValue('--handle').trim(), strokeStyle:getComputedStyle(document.documentElement).getPropertyValue('--handle-edge').trim(), lineWidth: 1 } });
+        let pan = Body.create({ parts: [panBody, panHandle], friction: 0.4, frictionStatic: 0.8, frictionAir: 0.02, restitution: 0.08 });
+        const handleLocal = { x: panHandle.position.x - pan.position.x, y: panHandle.position.y - pan.position.y };
+        World.add(world, [pan]);
+        Body.setStatic(pan, true);
+
+        let flipState = 'in_pan';
+        const scoreUI = document.getElementById('score');
+
+        function updateScoreDisplay(rewardValue = null) {
+            if (gameMode === 'TRAINING') {
+                scoreUI.textContent = `보상: ${rewardValue !== null ? rewardValue.toFixed(3) : '...'}`;
+            } else {
+                scoreUI.textContent = `점수: ${score}`;
+            }
+        }
+
+        let anchorTargetX = W * 0.5;
+        let anchorTargetY = H * 0.65;
+        let anchorYOffset = 0;
+        const DEG2RAD = Math.PI / 180;
+        let desiredAngle = 0;
+        const MIN_ANGLE = -80 * DEG2RAD, MAX_ANGLE = 80 * DEG2RAD;
+        const USER_MOVE_SPEED = 5 * scale, USER_ROT_SPEED = 1.5 * DEG2RAD;
+        const AI_MOVE_FORCE = 8 * scale, AI_ROT_FORCE = 2.5 * DEG2RAD;
+        const keys = Object.create(null);
+
+        const PANCAKE_CONF = { length: 160 * scale, segments: 8, particleRadius: 6 * scale, density: 0.0012, friction: 0.9, frictionStatic: 1.0, linkStiffness: 0.98, linkDamping: 0.28, bendStiffness: 0.9, bendDamping: 0.25, thirdStiffness: 0.7, thirdDamping: 0.22 };
+        let pancake = { nodes: [], constraints: [] };
+
+        function buildPancake() { 
+            teardownPancake(); 
+            const cfg = PANCAKE_CONF;
+            const n = cfg.segments + 1;
+            const step = cfg.length / cfg.segments;
+
+            const panTopY = panBody.bounds.min.y;
+            const startY = panTopY - cfg.particleRadius;
+            const startX = pan.position.x - cfg.length/Math.floor(Math.random() * 3 + 3);
+
+            const nodes = []; 
+            for (let i = 0; i < n; i++) { 
+                nodes.push(Bodies.circle(startX + i * step, startY, cfg.particleRadius, { 
+                    density: cfg.density, friction: cfg.friction, frictionStatic: cfg.frictionStatic, 
+                    frictionAir: 0.012, restitution: 0, 
+                    collisionFilter: { category: 0x0002, mask: 0x0001 }, 
+                    render: { fillStyle: '#f0c27b', strokeStyle: '#8a5a2f', lineWidth: 1 } 
+                })); 
+            } 
+            const cons = []; 
+            for (let i = 0; i < n - 1; i++) { cons.push(Constraint.create({ bodyA: nodes[i], bodyB: nodes[i + 1], length: step, stiffness: cfg.linkStiffness, damping: cfg.linkDamping, render: { visible: false } })); } 
+            for (let i = 0; i < n - 2; i++) { cons.push(Constraint.create({ bodyA: nodes[i], bodyB: nodes[i + 2], length: step * 2, stiffness: cfg.bendStiffness, damping: cfg.bendDamping, render: { visible: false } })); } 
+            for (let i = 0; i < n - 3; i++) { cons.push(Constraint.create({ bodyA: nodes[i], bodyB: nodes[i + 3], length: step * 3, stiffness: cfg.thirdStiffness, damping: cfg.thirdDamping, render: { visible: false } })); } 
+            pancake.nodes = nodes; 
+            pancake.constraints = cons; 
+            World.add(world, [...nodes, ...cons]); 
+        }
+        
+        function teardownPancake() { 
+            if (pancake.nodes.length) World.remove(world, pancake.nodes); 
+            if (pancake.constraints.length) World.remove(world, pancake.constraints); 
+            pancake.nodes = []; pancake.constraints = []; 
+        }
+
+        let lastToss = 0, bumping = false;
+        function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); } function easeInCubic(t) { return t * t * t; }
+        function toss() { const now = performance.now(); if (now - lastToss < 180 || bumping) return; lastToss = now; bumping = true; const upMs = 90, downMs = 140, lift = -24 * scale; let phase = 'up', t0 = performance.now(), startYOffset = 0; function step() { const t = performance.now(); if (phase === 'up') { const p = Math.min(1, (t - t0) / upMs); anchorYOffset = startYOffset + (lift - startYOffset) * easeOutCubic(p); if (p >= 1) { phase = 'down'; t0 = performance.now(); } requestAnimationFrame(step); } else { const p = Math.min(1, (t - t0) / downMs); anchorYOffset = lift + (0 - lift) * easeInCubic(p); if (p < 1) requestAnimationFrame(step); else { anchorYOffset = 0; bumping = false; } } } requestAnimationFrame(step); }
+        
+        function applyAction(action) { const [moveX, moveY, rotate, doToss] = action; anchorTargetX += moveX * AI_MOVE_FORCE; anchorTargetY += moveY * AI_MOVE_FORCE; desiredAngle += rotate * AI_ROT_FORCE; if (doToss > 0.5) toss(); }
+
+        Events.on(engine, 'beforeUpdate', () => {
+          if (isRoundOver) return;
+          if (gameMode === 'USER') {
+              if (keys['ArrowLeft']) anchorTargetX -= USER_MOVE_SPEED;
+              if (keys['ArrowRight']) anchorTargetX += USER_MOVE_SPEED;
+              if (keys['ArrowUp']) anchorTargetY -= USER_MOVE_SPEED;
+              if (keys['ArrowDown']) anchorTargetY += USER_MOVE_SPEED;
+              if (keys['RotateLeft']) desiredAngle -= USER_ROT_SPEED;
+              if (keys['RotateRight']) desiredAngle += USER_ROT_SPEED;
+          } else if (gameMode === 'AI') { applyAction(latestAiAction); }
+          const marginX = 140 * scale, marginY = 100 * scale;
+          anchorTargetX = Math.max(marginX, Math.min(W - marginX, anchorTargetX));
+          anchorTargetY = Math.max(marginY, Math.min(H - marginY, anchorTargetY));
+          desiredAngle = Math.max(MIN_ANGLE, Math.min(MAX_ANGLE, desiredAngle));
+          const pivotPos = { x: anchorTargetX, y: anchorTargetY + anchorYOffset }, offset = Vector.rotate(handleLocal, desiredAngle), center = Vector.sub(pivotPos, offset);
+          Body.setStatic(pan, false); Body.setPosition(pan, center); Body.setAngle(pan, desiredAngle); Body.setStatic(pan, true);
+        });
+
+        Events.on(render, 'afterRender', () => { const ctx = render.context, pts = pancake.nodes.map(n => n.position); if (pts.length < 2) return; const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(), border = getComputedStyle(document.documentElement).getPropertyValue('--accent-strong').trim(); ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); for (let i = 1; i < pts.length - 1; i++) { const midX = (pts[i].x + pts[i + 1].x) / 2, midY = (pts[i].y + pts[i + 1].y) / 2; ctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY); } ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y); ctx.strokeStyle = border; ctx.lineWidth = 26 * scale; ctx.stroke(); ctx.strokeStyle = accent; ctx.lineWidth = 22 * scale; ctx.stroke(); ctx.restore(); });
+        function getObservation() { if (!pancake.nodes.length) return new Array(20).fill(0); const obs = [], panPos = pan.position, panAngle = pan.angle; obs.push(panPos.x / W, (panPos.y - H/2) / (H/2), panAngle / MAX_ANGLE, desiredAngle / MAX_ANGLE); let comX = 0, comY = 0, comVelX = 0, comVelY = 0; pancake.nodes.forEach(node => { comX += node.position.x; comY += node.position.y; comVelX += node.velocity.x; comVelY += node.velocity.y; }); const n = pancake.nodes.length; comX /= n; comY /= n; comVelX /= n; comVelY /= n; obs.push((comX - panPos.x) / (W / 2), (comY - panPos.y) / (H / 2), comVelX / 10, comVelY / 10); const keyNodes = [pancake.nodes[0], pancake.nodes[Math.floor(n/2)], pancake.nodes[n-1]]; keyNodes.forEach(node => { const relPos = Vector.sub(node.position, panPos), rotatedRelPos = Vector.rotate(relPos, -panAngle), relVel = Vector.sub(node.velocity, pan.velocity); obs.push(rotatedRelPos.x / (140 * scale), rotatedRelPos.y / (50 * scale), relVel.x / 10, relVel.y / 10); }); return obs; }
+        
+        function isOutOfBouds() {
+            if (!pancake.nodes.length) return false;
+            for (const node of pancake.nodes) {
+                const r = node.circleRadius;
+                if (node.position.y < ceil.position.y + thickness/2 + r || 
+                    node.position.y > ground.position.y - thickness/2 - r ||
+                    node.position.x < wallL.position.x + thickness/2 + r ||
+                    node.position.x > wallR.position.x - thickness/2 - r) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function calculateRewardAndDone() {
+            let reward = 0;
+            let done = false;
+            if (!pancake.nodes.length) return { reward: 0, done: true };
+
+            if (isOutOfBouds()) {
+                done = true;
+                isRoundOver = true; 
+                return { reward: -5,done: true };
+            }
+
+            const n = pancake.nodes.length;
+            let isContact = false;
+            const panSolids = pan.parts.filter(part => part !== pan && !part.isSensor);
+            for (const node of pancake.nodes) {
+                for (const part of panSolids){
+                  const collision = Matter.SAT.collides(node, part);
+                  if (collision && collision.collided) { isContact = true; break; }
+                }
+                if (isContact) break;
+            }
+            
+            const pancakeCenterY = pancake.nodes.reduce((sum, node) => sum + node.position.y, 0) / n;
+            const panY = pan.position.y;
+
+            if (flipState === 'in_pan') {
+                if (panY - pancakeCenterY > 40 * scale) {
+                    flipState = 'in_air'; 
+                    hasFlippedInAir = false;
+                    orientationAtLaunch = Math.sign(pancake.nodes[n - 1].position.x - pancake.nodes[0].position.x);
+                }
+            } else if (flipState === 'in_air') {
+                if (isContact) {
+                    if (hasFlippedInAir) {
+                        reward = 10.0;
+                    }
+                    flipState = 'in_pan';
+                } else {
+                    if (!hasFlippedInAir) {
+                        const currentOrientation = Math.sign(pancake.nodes[n-1].position.x - pancake.nodes[0].position.x);
+                        if (currentOrientation !== 0 && currentOrientation !== orientationAtLaunch) {
+                            hasFlippedInAir = true;
+                        }
+                    }
+                }
+            }
+            return { reward, done };
+        }
+        
+        Events.on(engine, 'afterUpdate', () => { 
+            if (gameMode === 'TRAINING' || isRoundOver || !pancake.nodes.length) return; 
+            
+            if (isOutOfBouds()) {
+                if (!isRoundOver) {
+                    isRoundOver = true;
+                    setTimeout(resetGame, 500);
+                }
+                return;
+            }
+
+            let isContact = false; 
+            const panSolids = pan.parts.filter(part => part !== pan && !part.isSensor); 
+            for (const node of pancake.nodes) { 
+                for (const part of panSolids) { 
+                    const collision = Matter.SAT.collides(node, part);
+                    if (collision && collision.collided) { isContact = true; break; } 
+                } 
+                if (isContact) break; 
+            } 
+            const n = pancake.nodes.length;
+            const pancakeCenterY = pancake.nodes.reduce((sum, node) => sum + node.position.y, 0) / n;
+            const panY = pan.position.y; 
+            if (flipState === 'in_pan') {
+                if (panY - pancakeCenterY > 40 * scale) {
+                    flipState = 'in_air'; hasFlippedInAir = false; 
+                    orientationAtLaunch = Math.sign(pancake.nodes[n - 1].position.x - pancake.nodes[0].position.x);
+                }
+            } else if (flipState === 'in_air') {
+                if (!hasFlippedInAir) {
+                    const currentOrientation = Math.sign(pancake.nodes[n - 1].position.x - pancake.nodes[0].position.x);
+                    if (currentOrientation !== 0 && currentOrientation !== orientationAtLaunch) {
+                        hasFlippedInAir = true;
+                    }
+                }
+                if (isContact) {
+                    if (hasFlippedInAir) { 
+                        score += 10; 
+                        updateScoreDisplay(); 
+                    }
+                    flipState = 'in_pan';
+                }
+            }
+        });
+        
+        function resetGame() { 
+            isRoundOver = false; anchorTargetX = W * 0.5; anchorTargetY = H * 0.65; anchorYOffset = 0; 
+            desiredAngle = 0; hasFlippedInAir = false; orientationAtLaunch = 1;
+            const pivotPos = { x: anchorTargetX, y: anchorTargetY }, offset = Vector.rotate(handleLocal, desiredAngle), center = Vector.sub(pivotPos, offset); 
+            Body.setStatic(pan, false); Body.setPosition(pan, center); Body.setAngle(pan, 0); Body.setStatic(pan, true); 
+            buildPancake(); 
+            // [수정] 아래의 점수 초기화 코드를 제거하여 점수가 누적되도록 합니다.
+            // score = 0; 
+            flipState = 'in_pan'; 
+            updateScoreDisplay(); 
+        }
+
+        function resetForTraining() { 
+            resetGame(); 
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ observation: getObservation() })); 
+        }
+        
+        function stepGameForTraining(action) { 
+            if (isRoundOver) return; 
+            applyAction(action); 
+            Engine.update(engine, 1000 / 120); 
+            const { reward, done } = calculateRewardAndDone(); 
+            if (reward > 0) {
+              score += reward; // Training 모드에서도 점수 누적
+            }
+            updateScoreDisplay(reward);
+            const observation = getObservation(); 
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ observation, reward, done })); 
+            if (done) setTimeout(resetForTraining, 50); 
+        }
+
+        function setGameMode(newMode) {
+            gameMode = newMode; sessionStorage.setItem('gameMode', newMode);
+            document.getElementById('mode-user').classList.toggle('active', newMode === 'USER'); 
+            document.getElementById('mode-ai').classList.toggle('active', newMode === 'AI'); 
+            document.getElementById('game-mode-status').textContent = newMode;
+            updateScoreDisplay();
+            const touchControls = document.querySelector('.touch-controls-container');
+            if (touchControls) { touchControls.classList.toggle('active', newMode === 'USER'); }
+            if (newMode === 'TRAINING') { runner.enabled = false; if(aiLoopInterval) clearInterval(aiLoopInterval); aiLoopInterval = null;
+            } else { runner.enabled = true; if (newMode === 'AI') { if (isModelReady && !aiLoopInterval) startAiLoop(); } else { if(aiLoopInterval) clearInterval(aiLoopInterval); aiLoopInterval = null; } }
+        }
+
+        async function loadOnnxModel() { const modelStatusUI = document.getElementById('model-status'); try { ortSession = await ort.InferenceSession.create('./model.onnx'); if (!ortSession || !ortSession.inputNames || !ortSession.inputNames.length === 0) throw new Error("ONNX 세션이 유효하지 않습니다."); isModelReady = true; modelStatusUI.textContent = '로드 완료'; modelStatusUI.className = 'status-value ok'; if (gameMode === 'AI') startAiLoop(); } catch (e) { isModelReady = false; modelStatusUI.textContent = '로드 실패'; modelStatusUI.className = 'status-value err'; console.error('ONNX 모델 로드 실패:', e); } }
+        function startAiLoop() { if (aiLoopInterval) clearInterval(aiLoopInterval); aiLoopInterval = setInterval(async () => { if (!isModelReady || gameMode !== 'AI' || isRoundOver) return; const obs = getObservation(), tensor = new ort.Tensor('float32', obs, [1, obs.length]), feeds = { [ortSession.inputNames[0]]: tensor }; try { const results = await ortSession.run(feeds); latestAiAction = Array.from(results[ortSession.outputNames[0]].data); } catch(e) { console.error("AI 추론 오류:", e); clearInterval(aiLoopInterval); aiLoopInterval = null; } }, 50); }
+        function connectWebSocket() { const wsStatusUI = document.getElementById('ws-status'); ws = new WebSocket('ws://localhost:8765'); ws.onopen = () => { wsStatusUI.textContent = '연결됨'; wsStatusUI.className = 'status-value ok'; setGameMode('TRAINING'); }; ws.onmessage = (event) => { const data = JSON.parse(event.data); if(data.command === 'reset') resetForTraining(); else if(data.command === 'action') stepGameForTraining(data.action); }; ws.onclose = () => { wsStatusUI.textContent = '연결 끊김'; wsStatusUI.className = 'status-value err'; if (gameMode === 'TRAINING') setGameMode('USER'); }; ws.onerror = () => { wsStatusUI.textContent = '오류'; wsStatusUI.className = 'status-value err'; }; }
+
+        document.getElementById('mode-user').addEventListener('click', () => setGameMode('USER')); document.getElementById('mode-ai').addEventListener('click', () => setGameMode('AI'));
+        
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        if (isTouchDevice) { document.body.classList.add('touch-enabled'); setupJoystick(); }
+        
+        function setupJoystick() {
+            const joystickZone = document.getElementById('joystick-zone');
+            if (!joystickZone) return;
+            const joystick = nipplejs.create({ zone: joystickZone, mode: 'static', position: { left: '50%', top: '50%' }, color: 'rgba(15, 23, 42, 0.6)' });
+            joystick.on('move', (evt, data) => {
+                const angle = data.angle.radian; const force = data.force; const deadzone = 0.1;
+                keys['ArrowUp'] = keys['ArrowDown'] = keys['ArrowLeft'] = keys['ArrowRight'] = false;
+                if (force > deadzone) {
+                    if (angle > Math.PI * 0.25 && angle < Math.PI * 0.75) keys['ArrowUp'] = true;
+                    else if (angle > Math.PI * 1.25 && angle < Math.PI * 1.75) keys['ArrowDown'] = true;
+                    if (angle > Math.PI * 0.75 && angle < Math.PI * 1.25) keys['ArrowLeft'] = true;
+                    else if (angle < Math.PI * 0.25 || angle > Math.PI * 1.75) keys['ArrowRight'] = true;
+                }
+            }).on('end', () => { keys['ArrowUp'] = keys['ArrowDown'] = keys['ArrowLeft'] = keys['ArrowRight'] = false; });
+
+            const rotL = document.getElementById('touch-rotate-left'); rotL.addEventListener('touchstart', (e) => { e.preventDefault(); keys['RotateLeft'] = true; }, { passive: false }); rotL.addEventListener('touchend', (e) => { e.preventDefault(); keys['RotateLeft'] = false; });
+            const rotR = document.getElementById('touch-rotate-right'); rotR.addEventListener('touchstart', (e) => { e.preventDefault(); keys['RotateRight'] = true; }, { passive: false }); rotR.addEventListener('touchend', (e) => { e.preventDefault(); keys['RotateRight'] = false; });
+            const spaceBtn = document.getElementById('touch-space'); spaceBtn.addEventListener('touchstart', (e) => { e.preventDefault(); if (gameMode === 'USER') toss(); }, { passive: false });
+        }
+        
+        loadOnnxModel(); connectWebSocket();
+        const savedMode = sessionStorage.getItem('gameMode'); setGameMode((savedMode && savedMode !== 'TRAINING') ? savedMode : 'USER');
+        
+        resetGame();
+
+        window.addEventListener('keydown', (e) => {
+          if (gameMode === 'USER') {
+              if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'KeyW', 'KeyS'].includes(e.code)) { e.preventDefault(); }
+              if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.code)) { keys[e.code] = true; }
+              if (e.code === 'KeyW') keys['RotateLeft'] = true;
+              if (e.code === 'KeyS') keys['RotateRight'] = true;
+              if (e.code === 'Space') toss();
+          }
+          if (e.code === 'KeyR') resetGame();
+          if (e.code === 'KeyG') engine.gravity.y = engine.gravity.y !== 0 ? 1.2 : 0;
+        });
+
+        window.addEventListener('keyup', (e) => { 
+            if (gameMode === 'USER') { 
+                if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) keys[e.code] = false;
+                if (e.code === 'KeyW') keys['RotateLeft'] = false;
+                if (e.code === 'KeyS') keys['RotateRight'] = false;
+            } 
+        });
+
+        window.addEventListener('resize', () => { window.location.reload(); });
+      });
+    </script>
+  </body>
+</html>
